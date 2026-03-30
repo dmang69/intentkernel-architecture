@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/26349831/README.md)
 # IntentKernel
 
 **A capability-secure execution architecture that replaces persistent permissions with event-scoped authority derived from verified user intent.**
