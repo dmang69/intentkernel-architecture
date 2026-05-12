@@ -1,0 +1,29 @@
+name: Rust Reference CI
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - ".github/workflows/rust-reference-ci.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - ".github/workflows/rust-reference-ci.yml"
+
+jobs:
+  rust-reference:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+      - name: Rust lint (clippy)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace
+

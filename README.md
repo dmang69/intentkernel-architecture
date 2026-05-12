@@ -181,6 +181,25 @@ intentkernel/
 | **v1.4** | Months 10-18 | Full SDK release + mobile integration |
 | **v2.0** | Year 2+ | Native hardware specification + SoC integration |
 
+## v1.2 Reference Prototype (Implementation Scaffold)
+
+The repository now includes a Rust workspace under [`src/`](src/) that implements a reference v1.2 prototype:
+
+- [`src/intentkernel-sdk`](src/intentkernel-sdk): capability lifecycle + 9 primitive SDK APIs
+- [`src/intentd`](src/intentd): Intent Broker daemon prototype for intent classification and token issuance
+- [`src/ransomware-demo`](src/ransomware-demo): end-to-end one-shot capability demo showing repeat-write blocking
+- [`src/lsm/intentkernel_lsm.c`](src/lsm/intentkernel_lsm.c): Linux LSM interceptor reference hooks for token-gated file/network/exec operations
+
+### Build and run (Rust workspace)
+
+```bash
+cd src
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo run -p ransomware-demo
+```
+
 ## License
 
 This architecture is released under the [Apache License 2.0](LICENSE). This ensures attribution while allowing commercial adoption and preventing patent aggression.
