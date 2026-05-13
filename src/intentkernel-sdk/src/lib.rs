@@ -1,3 +1,5 @@
+pub mod config;
+
 use core::fmt;
 use ml_dsa::{
     Generate, Keypair, MlDsa87, Signature, SignatureEncoding, Signer, SigningKey, Verifier,

@@ -7,4 +7,5 @@ license.workspace = true
 [dependencies]
 ml-dsa = "0.1.0-rc.11"
 sha3 = "0.11.0"
+serde = { version = "1", features = ["derive"] }
 
