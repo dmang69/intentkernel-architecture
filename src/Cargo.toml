@@ -3,6 +3,8 @@ members = [
     "intentkernel-sdk",
     "intentd",
     "ransomware-demo",
+    "ikrl",
+    "ikctl",
 ]
 resolver = "2"
 
