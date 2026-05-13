@@ -1,0 +1,18 @@
+[package]
+name = "ikrl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "IntentKernel Relief Layer — cross-platform capability upgrade daemon"
+
+[dependencies]
+intentkernel-sdk = { path = "../intentkernel-sdk" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# Windows-specific: only pulled in when cross-compiling for Windows.
+# [target.'cfg(target_os = "windows")'.dependencies]
+# windows-sys = { version = "0.59", features = ["Win32_System_EventLog", "Win32_Foundation"] }
