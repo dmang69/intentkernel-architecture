@@ -1,6 +1,4 @@
-use intentkernel_sdk::{
-    CapabilityScope, IntentKernelSdk, IntentRequest, IntentSource, RiskLevel,
-};
+use intentkernel_sdk::{CapabilityScope, IntentKernelSdk, IntentRequest, IntentSource, RiskLevel};
 use std::io::{self, BufRead};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -41,7 +39,13 @@ fn main() {
                 let resource_id = parts[2].to_string();
                 let action = parts[3];
                 let target = parts[4].to_string();
-                let uses: u32 = parts[5].parse().unwrap_or(1);
+                let uses: u32 = match parts[5].parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("invalid uses value");
+                        continue;
+                    }
+                };
 
                 let scope = match action {
                     "draw" => CapabilityScope::Draw,
@@ -110,4 +114,3 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
-

@@ -10,6 +10,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/atomic.h>
 #include <linux/kernel.h>
 #include <linux/lsm_hooks.h>
 #include <linux/security.h>
@@ -26,7 +27,7 @@ struct ik_capability_token {
 	char algorithm[16];
 	u64 token_id;
 	u64 exp_ms;
-	u32 uses;
+	atomic_t uses;
 	u8 ctx_hash[32];
 	u32 scope;
 	u32 sig_len;
@@ -40,6 +41,7 @@ struct ik_capability_token {
  */
 static struct ik_capability_token *ik_current_token(void)
 {
+	/* TODO(intentkernel): wire secure task credentials from intentd/eventscope. */
 	return NULL;
 }
 
@@ -65,14 +67,14 @@ static int ik_validate_token_scope(u32 required_scope)
 		return -EACCES;
 	if (tok->exp_ms <= now_ms)
 		return -EKEYEXPIRED;
-	if (tok->uses == 0)
-		return -EACCES;
 	if (tok->scope != required_scope)
 		return -EACCES;
 	if (ik_verify_mldsa87(tok) != 0)
 		return -EKEYREJECTED;
 
-	tok->uses--;
+	if (atomic_dec_if_positive(&tok->uses) < 0)
+		return -EACCES;
+
 	return 0;
 }
 
@@ -86,8 +88,8 @@ enum ik_scope {
 
 static int ik_file_open(struct file *file)
 {
-	int required = (file->f_mode & FMODE_WRITE) ? IK_SCOPE_FILE_WRITE : IK_SCOPE_FILE_READ;
-	return ik_validate_token_scope(required);
+	int required_scope = (file->f_mode & FMODE_WRITE) ? IK_SCOPE_FILE_WRITE : IK_SCOPE_FILE_READ;
+	return ik_validate_token_scope(required_scope);
 }
 
 static int ik_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen)
@@ -117,4 +119,3 @@ DEFINE_LSM(intentkernel) = {
 	.name = "intentkernel",
 	.init = intentkernel_lsm_init,
 };
-

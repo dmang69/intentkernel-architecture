@@ -13,6 +13,8 @@ on:
 jobs:
   rust-reference:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: src
@@ -26,4 +28,3 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test --workspace
-

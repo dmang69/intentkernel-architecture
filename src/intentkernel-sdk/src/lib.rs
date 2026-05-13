@@ -1,5 +1,8 @@
 use core::fmt;
-use ml_dsa::{Generate, Keypair, MlDsa87, Signature, SignatureEncoding, Signer, SigningKey, Verifier, VerifyingKey};
+use ml_dsa::{
+    Generate, Keypair, MlDsa87, Signature, SignatureEncoding, Signer, SigningKey, Verifier,
+    VerifyingKey,
+};
 use sha3::{Digest, Sha3_256};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,12 +33,24 @@ pub enum RiskLevel {
 pub enum CapabilityScope {
     Draw,
     WaitEvent,
-    GetResource { resource_id: String },
-    PutResource { resource_id: String, max_bytes: usize },
-    NetworkRequest { destination: String, max_bytes: usize },
-    ScheduleNotification { channel: String },
+    GetResource {
+        resource_id: String,
+    },
+    PutResource {
+        resource_id: String,
+        max_bytes: usize,
+    },
+    NetworkRequest {
+        destination: String,
+        max_bytes: usize,
+    },
+    ScheduleNotification {
+        channel: String,
+    },
     CreateCapability,
-    InvokeCapability { operation: String },
+    InvokeCapability {
+        operation: String,
+    },
     Exit,
 }
 
@@ -86,10 +101,11 @@ impl fmt::Display for SdkError {
 impl std::error::Error for SdkError {}
 
 pub struct IntentBroker {
-    signing_key: SigningKey<MlDsa87>,
-    verifying_key: VerifyingKey<MlDsa87>,
+    signing_key: Box<SigningKey<MlDsa87>>,
+    verifying_key: Box<VerifyingKey<MlDsa87>>,
     key_id: String,
     revoked: HashSet<u64>,
+    consumed_uses: HashMap<u64, u32>,
     next_id: u64,
 }
 
@@ -98,10 +114,11 @@ impl IntentBroker {
         let signing_key = SigningKey::<MlDsa87>::generate();
         let verifying_key = signing_key.verifying_key();
         Self {
-            signing_key,
-            verifying_key,
+            signing_key: Box::new(signing_key),
+            verifying_key: Box::new(verifying_key),
             key_id: key_id.into(),
             revoked: HashSet::new(),
+            consumed_uses: HashMap::new(),
             next_id: 1,
         }
     }
@@ -161,9 +178,9 @@ impl IntentBroker {
     }
 
     pub fn verify_and_consume(
-        &self,
-        token: &mut CapabilityToken,
-        expected_scope: &CapabilityScope,
+        &mut self,
+        token: &CapabilityToken,
+        requested_scope: &CapabilityScope,
     ) -> Result<(), SdkError> {
         if self.revoked.contains(&token.id) {
             return Err(SdkError::TokenRevoked);
@@ -174,18 +191,77 @@ impl IntentBroker {
         if token.uses == 0 {
             return Err(SdkError::TokenExhausted);
         }
-        if &token.scope != expected_scope {
+        let consumed = self.consumed_uses.get(&token.id).copied().unwrap_or(0);
+        if consumed >= token.uses {
+            return Err(SdkError::TokenExhausted);
+        }
+        if !scope_allows(&token.scope, requested_scope) {
             return Err(SdkError::ScopeMismatch);
         }
 
         let payload = token_payload_bytes(token);
-        let sig = Signature::<MlDsa87>::try_from(token.sig.as_slice()).map_err(|_| SdkError::PayloadInvalid)?;
+        let sig = Signature::<MlDsa87>::try_from(token.sig.as_slice())
+            .map_err(|_| SdkError::PayloadInvalid)?;
         self.verifying_key
             .verify(&payload, &sig)
             .map_err(|_| SdkError::SignatureInvalid)?;
 
-        token.uses -= 1;
+        self.consumed_uses.insert(token.id, consumed + 1);
         Ok(())
+    }
+}
+
+fn scope_allows(token_scope: &CapabilityScope, requested_scope: &CapabilityScope) -> bool {
+    match (token_scope, requested_scope) {
+        (CapabilityScope::Draw, CapabilityScope::Draw) => true,
+        (CapabilityScope::WaitEvent, CapabilityScope::WaitEvent) => true,
+        (
+            CapabilityScope::GetResource {
+                resource_id: token_id,
+            },
+            CapabilityScope::GetResource {
+                resource_id: requested_id,
+            },
+        ) => token_id == requested_id,
+        (
+            CapabilityScope::PutResource {
+                resource_id: token_id,
+                max_bytes: token_max,
+            },
+            CapabilityScope::PutResource {
+                resource_id: requested_id,
+                max_bytes: requested_max,
+            },
+        ) => token_id == requested_id && requested_max <= token_max,
+        (
+            CapabilityScope::NetworkRequest {
+                destination: token_dst,
+                max_bytes: token_max,
+            },
+            CapabilityScope::NetworkRequest {
+                destination: requested_dst,
+                max_bytes: requested_max,
+            },
+        ) => token_dst == requested_dst && requested_max <= token_max,
+        (
+            CapabilityScope::ScheduleNotification {
+                channel: token_channel,
+            },
+            CapabilityScope::ScheduleNotification {
+                channel: requested_channel,
+            },
+        ) => token_channel == requested_channel,
+        (CapabilityScope::CreateCapability, CapabilityScope::CreateCapability) => true,
+        (
+            CapabilityScope::InvokeCapability {
+                operation: token_op,
+            },
+            CapabilityScope::InvokeCapability {
+                operation: requested_op,
+            },
+        ) => token_op == requested_op,
+        (CapabilityScope::Exit, CapabilityScope::Exit) => true,
+        _ => false,
     }
 }
 
@@ -219,14 +295,16 @@ impl IntentKernelSdk {
     }
 
     pub fn draw(&mut self, frame: &[u8], token: &mut CapabilityToken) -> Result<(), SdkError> {
-        self.broker.verify_and_consume(token, &CapabilityScope::Draw)?;
+        self.broker
+            .verify_and_consume(token, &CapabilityScope::Draw)?;
         self.framebuffer.clear();
         self.framebuffer.extend_from_slice(frame);
         Ok(())
     }
 
     pub fn wait_event(&mut self, token: &mut CapabilityToken) -> Result<&'static str, SdkError> {
-        self.broker.verify_and_consume(token, &CapabilityScope::WaitEvent)?;
+        self.broker
+            .verify_and_consume(token, &CapabilityScope::WaitEvent)?;
         Ok("event.received")
     }
 
@@ -322,7 +400,8 @@ impl IntentKernelSdk {
     }
 
     pub fn exit(&mut self, token: &mut CapabilityToken) -> Result<(), SdkError> {
-        self.broker.verify_and_consume(token, &CapabilityScope::Exit)?;
+        self.broker
+            .verify_and_consume(token, &CapabilityScope::Exit)?;
         self.exited = true;
         Ok(())
     }
@@ -331,6 +410,7 @@ impl IntentKernelSdk {
 pub fn ttl_for_risk(risk: RiskLevel) -> Duration {
     match risk {
         RiskLevel::Low => Duration::from_secs(5),
+        // Matches IBP-1.0 Section 6.2 table where medium TTL is longer than high.
         RiskLevel::Medium => Duration::from_secs(30),
         RiskLevel::High => Duration::from_secs(10),
         RiskLevel::Critical => Duration::from_millis(100),
@@ -389,21 +469,28 @@ fn token_payload_bytes(token: &CapabilityToken) -> Vec<u8> {
 
     let mut out = Vec::new();
     out.extend_from_slice(&[token.ver]);
-    out.extend_from_slice(token.typ.as_bytes());
-    out.extend_from_slice(token.alg.as_bytes());
-    out.extend_from_slice(token.kid.as_bytes());
+    push_len_prefixed(&mut out, token.typ.as_bytes());
+    push_len_prefixed(&mut out, token.alg.as_bytes());
+    push_len_prefixed(&mut out, token.kid.as_bytes());
     out.extend_from_slice(&token.id.to_be_bytes());
-    out.extend_from_slice(class.as_bytes());
+    push_len_prefixed(&mut out, class.as_bytes());
     out.extend_from_slice(&token.ctx);
-    out.extend_from_slice(scope.as_bytes());
+    push_len_prefixed(&mut out, scope.as_bytes());
     out.extend_from_slice(&token.exp_ms.to_be_bytes());
     out.extend_from_slice(&token.uses.to_be_bytes());
     out
 }
 
+fn push_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
+    let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(bytes);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     fn request(resource_id: &str, source: IntentSource) -> IntentRequest {
         IntentRequest {
@@ -416,65 +503,73 @@ mod tests {
         }
     }
 
+    fn run_with_large_stack<F>(f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .expect("failed to spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
     #[test]
     fn mldsa87_token_lifecycle_issue_verify_expire_revoke() {
-        let mut sdk = IntentKernelSdk::new("broker-key-v1");
-        let req = request("network.tcp:10.0.0.1:443", IntentSource::SecureInputPath);
+        run_with_large_stack(|| {
+            let mut sdk = IntentKernelSdk::new("broker-key-v1");
+            let req = request("network.tcp:10.0.0.1:443", IntentSource::SecureInputPath);
 
-        let mut token = sdk.create_capability(
-            &req,
-            CapabilityScope::NetworkRequest {
-                destination: "10.0.0.1:443".into(),
-                max_bytes: 4,
-            },
-            RiskLevel::Medium,
-            1,
-        );
+            let mut token = sdk.create_capability(
+                &req,
+                CapabilityScope::NetworkRequest {
+                    destination: "10.0.0.1:443".into(),
+                    max_bytes: 4,
+                },
+                RiskLevel::Medium,
+                1,
+            );
 
-        assert!(sdk
-            .network_request("10.0.0.1:443", b"ping", &mut token)
-            .is_ok());
-        assert_eq!(
-            sdk.network_request("10.0.0.1:443", b"ping", &mut token),
-            Err(SdkError::TokenExhausted)
-        );
+            assert!(sdk
+                .network_request("10.0.0.1:443", b"ping", &mut token)
+                .is_ok());
+            assert_eq!(
+                sdk.network_request("10.0.0.1:443", b"ping", &mut token),
+                Err(SdkError::TokenExhausted)
+            );
 
-        let mut token2 = sdk.create_capability(
-            &req,
-            CapabilityScope::WaitEvent,
-            RiskLevel::Low,
-            1,
-        );
-        sdk.broker_mut().revoke(token2.id);
-        assert_eq!(
-            sdk.wait_event(&mut token2),
-            Err(SdkError::TokenRevoked)
-        );
+            let mut token2 =
+                sdk.create_capability(&req, CapabilityScope::WaitEvent, RiskLevel::Low, 1);
+            sdk.broker_mut().revoke(token2.id);
+            assert_eq!(sdk.wait_event(&mut token2), Err(SdkError::TokenRevoked));
+        });
     }
 
     #[test]
     fn ransomware_style_repeat_write_is_blocked() {
-        let mut sdk = IntentKernelSdk::new("broker-key-v1");
-        sdk.seed_resource("/vault/customer.db", b"ORIGINAL".to_vec());
-        let req = request("/vault/customer.db", IntentSource::SecureInputPath);
+        run_with_large_stack(|| {
+            let mut sdk = IntentKernelSdk::new("broker-key-v1");
+            sdk.seed_resource("/vault/customer.db", b"ORIGINAL".to_vec());
+            let req = request("/vault/customer.db", IntentSource::SecureInputPath);
 
-        let mut one_shot = sdk.create_capability(
-            &req,
-            CapabilityScope::PutResource {
-                resource_id: "/vault/customer.db".into(),
-                max_bytes: 9,
-            },
-            RiskLevel::High,
-            1,
-        );
+            let mut one_shot = sdk.create_capability(
+                &req,
+                CapabilityScope::PutResource {
+                    resource_id: "/vault/customer.db".into(),
+                    max_bytes: 10,
+                },
+                RiskLevel::High,
+                1,
+            );
 
-        assert!(sdk
-            .put_resource("/vault/customer.db", b"PATCH_ONCE", &mut one_shot)
-            .is_ok());
-        assert_eq!(
-            sdk.put_resource("/vault/customer.db", b"RANSOMED!!", &mut one_shot),
-            Err(SdkError::TokenExhausted)
-        );
+            assert!(sdk
+                .put_resource("/vault/customer.db", b"PATCH_ONCE", &mut one_shot)
+                .is_ok());
+            assert_eq!(
+                sdk.put_resource("/vault/customer.db", b"RANSOMED!!", &mut one_shot),
+                Err(SdkError::TokenExhausted)
+            );
+        });
     }
 }
-
