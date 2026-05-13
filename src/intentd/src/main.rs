@@ -2,6 +2,8 @@ use intentkernel_sdk::{CapabilityScope, IntentKernelSdk, IntentRequest, IntentSo
 use std::io::{self, BufRead};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_RESOURCE_BYTES: usize = 1_048_576;
+
 fn main() {
     let mut sdk = IntentKernelSdk::new("intentd.mldsa87.v1");
     println!("intentd ready");
@@ -46,6 +48,10 @@ fn main() {
                         continue;
                     }
                 };
+                if uses == 0 {
+                    eprintln!("uses must be greater than zero");
+                    continue;
+                }
 
                 let scope = match action {
                     "draw" => CapabilityScope::Draw,
@@ -55,11 +61,11 @@ fn main() {
                     },
                     "put" => CapabilityScope::PutResource {
                         resource_id: target.clone(),
-                        max_bytes: 1_048_576,
+                        max_bytes: MAX_RESOURCE_BYTES,
                     },
                     "net" => CapabilityScope::NetworkRequest {
                         destination: target.clone(),
-                        max_bytes: 1_048_576,
+                        max_bytes: MAX_RESOURCE_BYTES,
                     },
                     "notify" => CapabilityScope::ScheduleNotification {
                         channel: target.clone(),

@@ -482,7 +482,7 @@ fn token_payload_bytes(token: &CapabilityToken) -> Vec<u8> {
 }
 
 fn push_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
-    let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+    let len = u32::try_from(bytes.len()).expect("token payload segment exceeds u32::MAX");
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(bytes);
 }

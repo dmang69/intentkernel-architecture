@@ -88,7 +88,13 @@ enum ik_scope {
 
 static int ik_file_open(struct file *file)
 {
-	int required_scope = (file->f_mode & FMODE_WRITE) ? IK_SCOPE_FILE_WRITE : IK_SCOPE_FILE_READ;
+	enum ik_scope required_scope;
+
+	if (file->f_mode & FMODE_WRITE)
+		required_scope = IK_SCOPE_FILE_WRITE;
+	else
+		required_scope = IK_SCOPE_FILE_READ;
+
 	return ik_validate_token_scope(required_scope);
 }
 
