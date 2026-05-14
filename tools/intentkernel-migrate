@@ -24,7 +24,8 @@ SNAPSHOT_DIR = Path(
 SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
 SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
 SOCKET_TIMEOUT = float(os.environ.get("INTENTKERNEL_SOCKET_TIMEOUT", "1.0"))
-TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
+VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
 
 
 def usage() -> None:
@@ -68,8 +69,14 @@ def run_command(cmd: str, *, multi: bool = False) -> list[str]:
     return lines
 
 
-def snapshot_timestamp() -> str:
+def format_snapshot_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def validate_token(text: str, label: str, pattern: re.Pattern[str]) -> str:
+    if not pattern.fullmatch(text):
+        raise RuntimeError(f"{label} contains invalid characters: {text!r}")
+    return text
 
 
 def backup() -> int:
@@ -82,8 +89,9 @@ def backup() -> int:
         if "=" in line:
             key, value = line.split("=", 1)
             config[key.strip()] = value.strip()
-    snapshot = {"snapshot_created": snapshot_timestamp(), "config": config}
-    SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+    ordered_config = dict(sorted(config.items()))
+    snapshot = {"snapshot_created": format_snapshot_timestamp(), "config": ordered_config}
+    SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2) + "\n")
     print(f"saved config snapshot to {SNAPSHOT_CONFIG}")
     if AUDIT_LOG.exists():
         shutil.copy2(AUDIT_LOG, SNAPSHOT_AUDIT)
@@ -101,14 +109,10 @@ def restore() -> int:
     if not isinstance(config, dict):
         raise RuntimeError("snapshot config is missing or invalid")
     for key, value in config.items():
-        key_text = str(key)
-        value_text = str(value)
-        if not TOKEN_PATTERN.fullmatch(key_text):
-            raise RuntimeError(f"snapshot key contains invalid characters: {key_text!r}")
-        if not TOKEN_PATTERN.fullmatch(value_text):
-            raise RuntimeError(
-                f"snapshot value contains invalid characters for {key_text!r}"
-            )
+        key_text = validate_token(str(key), "snapshot key", KEY_PATTERN)
+        value_text = validate_token(
+            str(value), f"snapshot value for {key_text!r}", VALUE_PATTERN
+        )
         run_command(f"config set {key_text} {value_text}")
     print(f"restored {len(config)} config entries")
     if SNAPSHOT_AUDIT.exists():
