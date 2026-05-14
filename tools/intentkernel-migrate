@@ -25,7 +25,7 @@ SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
 SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
 SOCKET_TIMEOUT = float(os.environ.get("INTENTKERNEL_SOCKET_TIMEOUT", "1.0"))
 KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
-VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def usage() -> None:
@@ -70,7 +70,7 @@ def run_command(cmd: str, *, multi: bool = False) -> list[str]:
 
 
 def create_snapshot_timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def validate_token(text: str, label: str, pattern: re.Pattern[str]) -> str:
@@ -126,10 +126,6 @@ def restore() -> int:
         value_text = validate_token(
             str(value), f"snapshot value for {key_text!r}", VALUE_PATTERN
         )
-        if value_text.startswith(".") or ".." in value_text:
-            raise RuntimeError(
-                f"snapshot value for {key_text!r} contains a path traversal sequence"
-            )
         run_command(f"config set {key_text} {value_text}")
     print(f"restored {len(config)} config entries")
     if SNAPSHOT_AUDIT.exists():
