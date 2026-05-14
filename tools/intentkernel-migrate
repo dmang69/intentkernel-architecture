@@ -24,8 +24,7 @@ SNAPSHOT_DIR = Path(
 SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
 SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
 SOCKET_TIMEOUT = float(os.environ.get("INTENTKERNEL_SOCKET_TIMEOUT", "1.0"))
-KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
-VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
+TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
 
 
 def usage() -> None:
@@ -74,6 +73,8 @@ def format_snapshot_timestamp() -> str:
 
 
 def validate_token(text: str, label: str, pattern: re.Pattern[str]) -> str:
+    if not text:
+        raise RuntimeError(f"{label} must not be empty")
     if not pattern.fullmatch(text):
         raise RuntimeError(f"{label} contains invalid characters: {text!r}")
     return text
@@ -84,8 +85,6 @@ def backup() -> int:
     lines = run_command("config get", multi=True)
     config: dict[str, str] = {}
     for line in lines:
-        if line.startswith("error:"):
-            raise RuntimeError(line)
         if "=" in line:
             key, value = line.split("=", 1)
             config[key.strip()] = value.strip()
@@ -109,9 +108,9 @@ def restore() -> int:
     if not isinstance(config, dict):
         raise RuntimeError("snapshot config is missing or invalid")
     for key, value in config.items():
-        key_text = validate_token(str(key), "snapshot key", KEY_PATTERN)
+        key_text = validate_token(str(key), "snapshot key", TOKEN_PATTERN)
         value_text = validate_token(
-            str(value), f"snapshot value for {key_text!r}", VALUE_PATTERN
+            str(value), f"snapshot value for {key_text!r}", TOKEN_PATTERN
         )
         run_command(f"config set {key_text} {value_text}")
     print(f"restored {len(config)} config entries")
