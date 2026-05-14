@@ -25,7 +25,7 @@ SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
 SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
 SOCKET_TIMEOUT = float(os.environ.get("INTENTKERNEL_SOCKET_TIMEOUT", "1.0"))
 KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.]+$")
-VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_./:-]+$")
 
 
 def usage() -> None:
@@ -86,13 +86,14 @@ def backup() -> int:
     lines = run_command("config get", multi=True)
     config: dict[str, str] = {}
     for line in lines:
-        if "=" in line:
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if not key:
-                raise RuntimeError("intentd returned an empty config key")
-            config[key] = value
+        if "=" not in line:
+            raise RuntimeError(f"unexpected config line from intentd: {line!r}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise RuntimeError("intentd returned an empty config key")
+        config[key] = value
     ordered_config = dict(sorted(config.items()))
     snapshot = {"snapshot_created": format_snapshot_timestamp(), "config": ordered_config}
     SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2) + "\n")
@@ -109,9 +110,12 @@ def restore() -> int:
     if not SNAPSHOT_CONFIG.exists():
         raise RuntimeError(f"snapshot file not found at {SNAPSHOT_CONFIG}")
     snapshot = json.loads(SNAPSHOT_CONFIG.read_text())
+    snapshot_created = snapshot.get("snapshot_created")
     config = snapshot.get("config")
     if not isinstance(config, dict):
         raise RuntimeError("snapshot config is missing or invalid")
+    if snapshot_created:
+        print(f"restoring snapshot from {snapshot_created}")
     for key, value in config.items():
         key_text = validate_token(str(key), "snapshot key", KEY_PATTERN)
         value_text = validate_token(
