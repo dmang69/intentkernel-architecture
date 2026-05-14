@@ -111,7 +111,10 @@ def backup() -> int:
 def restore() -> int:
     if not SNAPSHOT_CONFIG.exists():
         raise RuntimeError(f"snapshot file not found at {SNAPSHOT_CONFIG}")
-    snapshot = json.loads(SNAPSHOT_CONFIG.read_text())
+    try:
+        snapshot = json.loads(SNAPSHOT_CONFIG.read_text())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"snapshot file is not valid JSON: {exc}") from exc
     snapshot_created = snapshot.get("snapshot_created")
     config = snapshot.get("config")
     if not isinstance(config, dict):
@@ -123,7 +126,7 @@ def restore() -> int:
         value_text = validate_token(
             str(value), f"snapshot value for {key_text!r}", VALUE_PATTERN
         )
-        if ".." in value_text:
+        if value_text.startswith(".") or ".." in value_text:
             raise RuntimeError(
                 f"snapshot value for {key_text!r} contains a path traversal sequence"
             )
