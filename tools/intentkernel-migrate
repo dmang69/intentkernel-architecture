@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+SOCKET_PATH = os.environ.get("INTENTKERNEL_SOCKET", "/tmp/intentkernel-intentd.sock")
+AUDIT_LOG = os.environ.get("INTENTKERNEL_AUDIT_LOG", "/tmp/intentkernel-audit.log")
+SNAPSHOT_DIR = Path(
+    os.environ.get("INTENTKERNEL_SNAPSHOT_DIR", str(REPO_ROOT / "snapshots"))
+)
+SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
+SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
+
+
+def usage() -> None:
+    print("usage: intentkernel-migrate <backup|restore>", file=sys.stderr)
+
+
+def ensure_socket() -> None:
+    if not os.path.exists(SOCKET_PATH):
+        raise RuntimeError(f"intentd socket not found at {SOCKET_PATH}")
+
+
+def run_command(cmd: str, *, multi: bool = False) -> list[str]:
+    ensure_socket()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.0)
+            sock.connect(SOCKET_PATH)
+            sock.sendall(f"{cmd}\n".encode("utf-8"))
+            reader = sock.makefile("r")
+            lines: list[str] = []
+            try:
+                while True:
+                    line = reader.readline()
+                    if not line:
+                        break
+                    trimmed = line.rstrip("\r\n")
+                    if not trimmed:
+                        break
+                    lines.append(trimmed)
+                    if not multi:
+                        break
+            except socket.timeout:
+                pass
+    except OSError as exc:
+        raise RuntimeError(f"intentd connection failed: {exc}") from exc
+
+    if not lines:
+        raise RuntimeError("no response from intentd")
+    if lines[0].startswith("error:"):
+        raise RuntimeError(lines[0])
+    return lines
+
+
+def snapshot_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def backup() -> int:
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    lines = run_command("config get", multi=True)
+    config: dict[str, str] = {}
+    for line in lines:
+        if line.startswith("error:"):
+            raise RuntimeError(line)
+        if "=" in line:
+            key, value = line.split("=", 1)
+            config[key.strip()] = value.strip()
+    snapshot = {"snapshot_created": snapshot_timestamp(), "config": config}
+    SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+    print(f"saved config snapshot to {SNAPSHOT_CONFIG}")
+    if os.path.exists(AUDIT_LOG):
+        shutil.copy2(AUDIT_LOG, SNAPSHOT_AUDIT)
+        print(f"saved audit log to {SNAPSHOT_AUDIT}")
+    else:
+        print(f"warning: audit log not found at {AUDIT_LOG}", file=sys.stderr)
+    return 0
+
+
+def restore() -> int:
+    if not SNAPSHOT_CONFIG.exists():
+        raise RuntimeError(f"snapshot file not found at {SNAPSHOT_CONFIG}")
+    snapshot = json.loads(SNAPSHOT_CONFIG.read_text())
+    config = snapshot.get("config")
+    if not isinstance(config, dict):
+        raise RuntimeError("snapshot config is missing or invalid")
+    for key, value in config.items():
+        run_command(f"config set {key} {value}")
+    print(f"restored {len(config)} config entries")
+    if SNAPSHOT_AUDIT.exists():
+        shutil.copy2(SNAPSHOT_AUDIT, AUDIT_LOG)
+        print(f"restored audit log to {AUDIT_LOG}")
+    else:
+        print(f"warning: snapshot audit log not found at {SNAPSHOT_AUDIT}", file=sys.stderr)
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        usage()
+        return 2
+    command = sys.argv[1].lower()
+    if command == "backup":
+        return backup()
+    if command == "restore":
+        return restore()
+    usage()
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
