@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import sys
@@ -13,13 +14,17 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 
-SOCKET_PATH = os.environ.get("INTENTKERNEL_SOCKET", "/tmp/intentkernel-intentd.sock")
-AUDIT_LOG = os.environ.get("INTENTKERNEL_AUDIT_LOG", "/tmp/intentkernel-audit.log")
+SOCKET_PATH = Path(
+    os.environ.get("INTENTKERNEL_SOCKET", "/tmp/intentkernel-intentd.sock")
+)
+AUDIT_LOG = Path(os.environ.get("INTENTKERNEL_AUDIT_LOG", "/tmp/intentkernel-audit.log"))
 SNAPSHOT_DIR = Path(
     os.environ.get("INTENTKERNEL_SNAPSHOT_DIR", str(REPO_ROOT / "snapshots"))
 )
 SNAPSHOT_CONFIG = SNAPSHOT_DIR / "intentkernel-snapshot.json"
 SNAPSHOT_AUDIT = SNAPSHOT_DIR / "intentkernel-audit.log"
+SOCKET_TIMEOUT = float(os.environ.get("INTENTKERNEL_SOCKET_TIMEOUT", "1.0"))
+TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def usage() -> None:
@@ -27,7 +32,7 @@ def usage() -> None:
 
 
 def ensure_socket() -> None:
-    if not os.path.exists(SOCKET_PATH):
+    if not SOCKET_PATH.exists():
         raise RuntimeError(f"intentd socket not found at {SOCKET_PATH}")
 
 
@@ -35,8 +40,8 @@ def run_command(cmd: str, *, multi: bool = False) -> list[str]:
     ensure_socket()
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(1.0)
-            sock.connect(SOCKET_PATH)
+            sock.settimeout(SOCKET_TIMEOUT)
+            sock.connect(str(SOCKET_PATH))
             sock.sendall(f"{cmd}\n".encode("utf-8"))
             reader = sock.makefile("r")
             lines: list[str] = []
@@ -80,7 +85,7 @@ def backup() -> int:
     snapshot = {"snapshot_created": snapshot_timestamp(), "config": config}
     SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     print(f"saved config snapshot to {SNAPSHOT_CONFIG}")
-    if os.path.exists(AUDIT_LOG):
+    if AUDIT_LOG.exists():
         shutil.copy2(AUDIT_LOG, SNAPSHOT_AUDIT)
         print(f"saved audit log to {SNAPSHOT_AUDIT}")
     else:
@@ -96,7 +101,15 @@ def restore() -> int:
     if not isinstance(config, dict):
         raise RuntimeError("snapshot config is missing or invalid")
     for key, value in config.items():
-        run_command(f"config set {key} {value}")
+        key_text = str(key)
+        value_text = str(value)
+        if not TOKEN_PATTERN.fullmatch(key_text):
+            raise RuntimeError(f"snapshot key contains invalid characters: {key_text!r}")
+        if not TOKEN_PATTERN.fullmatch(value_text):
+            raise RuntimeError(
+                f"snapshot value contains invalid characters for {key_text!r}"
+            )
+        run_command(f"config set {key_text} {value_text}")
     print(f"restored {len(config)} config entries")
     if SNAPSHOT_AUDIT.exists():
         shutil.copy2(SNAPSHOT_AUDIT, AUDIT_LOG)
