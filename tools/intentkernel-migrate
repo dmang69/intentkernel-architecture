@@ -7,6 +7,7 @@ import re
 import shutil
 import socket
 import sys
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def run_command(cmd: str, *, multi: bool = False) -> list[str]:
     return lines
 
 
-def create_snapshot_timestamp() -> str:
+def generate_snapshot_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
@@ -97,7 +98,12 @@ def backup() -> int:
             raise RuntimeError(f"intentd returned an empty config value for {key!r}")
         config[key] = value
     ordered_config = dict(sorted(config.items()))
-    snapshot = {"snapshot_created": create_snapshot_timestamp(), "config": ordered_config}
+    snapshot = OrderedDict(
+        [
+            ("snapshot_created", generate_snapshot_timestamp()),
+            ("config", ordered_config),
+        ]
+    )
     SNAPSHOT_CONFIG.write_text(json.dumps(snapshot, indent=2) + "\n")
     print(f"saved config snapshot to {SNAPSHOT_CONFIG}")
     if AUDIT_LOG.exists():
@@ -122,9 +128,15 @@ def restore() -> int:
     if snapshot_created:
         print(f"restoring snapshot from {snapshot_created}")
     for key, value in config.items():
-        key_text = validate_token(str(key), "snapshot key", KEY_PATTERN)
+        if not isinstance(key, str):
+            raise RuntimeError(f"snapshot key must be a string, got {type(key).__name__}")
+        if not isinstance(value, str):
+            raise RuntimeError(
+                f"snapshot value for {key!r} must be a string, got {type(value).__name__}"
+            )
+        key_text = validate_token(key, "snapshot key", KEY_PATTERN)
         value_text = validate_token(
-            str(value), f"snapshot value for {key_text!r}", VALUE_PATTERN
+            value, f"snapshot value for {key_text!r}", VALUE_PATTERN
         )
         run_command(f"config set {key_text} {value_text}")
     print(f"restored {len(config)} config entries")
